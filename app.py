@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 from streamlit.components.v1 import html as st_html
 import pandas as pd
@@ -344,16 +347,11 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-ch
 
 
 # ========================= CONFIGURAÇÃO DO BANCO DE DADOS =========================
-DB_USER = os.environ.get('DB_USER', 'postgres')
-DB_PASS = os.environ.get('DB_PASS', '1234')
-DB_HOST = os.environ.get('DB_HOST', '127.0.0.1')
-DB_PORT = os.environ.get('DB_PORT', '5432')
-DB_NAME = os.environ.get('DB_NAME', 'microdados')
-DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}?client_encoding=utf8"
-NOME_TABELA = "dados_enem_consolidado"
+
+DATABASE_URL = f"postgresql+psycopg2://{os.getenv('DB_USER')}:{os.getenv('DB_PASS')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}?client_encoding=utf8"
+tabela =os.getenv('NOME_TABELA')
 
 # ========================= FUNÇÃO DE CARREGAMENTO DE DADOS E GEOJSON =========================
-LOCAL_GEOJSON_FILENAME = "brazil-states.geojson"
 
 @st.cache_data(show_spinner=False)
 def carregar_geojson_local(filename):
@@ -384,16 +382,16 @@ def carregar_dados_db(_engine):
     """
     Carrega os dados do banco de dados PostgreSQL e o GeoJSON local.
     """
-    geojson_data = carregar_geojson_local(LOCAL_GEOJSON_FILENAME)
+    geojson_data = carregar_geojson_local(os.getenv('LOCAL_GEOJSON_FILENAME'))
     if geojson_data is None:
         st.warning("Não foi possível carregar os dados geográficos para o mapa.")
 
     try:
         with _engine.connect() as connection:
 
-            query_anos = text(f'SELECT DISTINCT "NU_ANO" FROM "{NOME_TABELA}" ORDER BY "NU_ANO" DESC')
-            query_faixa = text(f'SELECT DISTINCT "TP_FAIXA_ETARIA" FROM "{NOME_TABELA}" ORDER BY "TP_FAIXA_ETARIA"')
-            query_conclusao = text(f'SELECT DISTINCT "TP_ST_CONCLUSAO" FROM "{NOME_TABELA}" ORDER BY "TP_ST_CONCLUSAO"')
+            query_anos = text(f'SELECT DISTINCT "NU_ANO" FROM "{tabela}" ORDER BY "NU_ANO" DESC')
+            query_faixa = text(f'SELECT DISTINCT "TP_FAIXA_ETARIA" FROM "{tabela}" ORDER BY "TP_FAIXA_ETARIA"')
+            query_conclusao = text(f'SELECT DISTINCT "TP_ST_CONCLUSAO" FROM "{tabela}" ORDER BY "TP_ST_CONCLUSAO"')
 
             anos_disponiveis = [str(a[0]) for a in connection.execute(query_anos).fetchall() if a[0] is not None]
             faixas_disponiveis = [f[0] for f in connection.execute(query_faixa).fetchall() if f[0] is not None]
@@ -407,7 +405,7 @@ def carregar_dados_db(_engine):
             ]
             colunas_necessarias = sorted(list(set(colunas_necessarias)))
             colunas_query = ", ".join([f'"{col}"' for col in colunas_necessarias])
-            query_total = text(f'SELECT {colunas_query} FROM "{NOME_TABELA}"')
+            query_total = text(f'SELECT {colunas_query} FROM "{tabela}"')
 
             df = pd.read_sql(query_total, connection)
 
@@ -446,7 +444,7 @@ def buscar_municipios_por_estado(estado_sigla, _engine):
         with _engine.connect() as connection:
             query = text(f'''
                 SELECT DISTINCT "NO_MUNICIPIO_PROVA"
-                FROM "{NOME_TABELA}"
+                FROM "{tabela}"
                 WHERE "SG_UF_PROVA" = :estado
                 ORDER BY "NO_MUNICIPIO_PROVA" ASC
             ''')
