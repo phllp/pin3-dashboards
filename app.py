@@ -6,11 +6,12 @@ from streamlit.components.v1 import html as st_html
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go 
-from sqlalchemy import create_engine, text
+
 import os
 import numpy as np 
-import json 
 from streamlit_plotly_events import plotly_events 
+
+from db.connection import get_engine
 
 st.set_page_config(page_title="Dashboard ENEM", layout="wide")
 
@@ -348,124 +349,16 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-ch
 
 # ========================= CONFIGURAÇÃO DO BANCO DE DADOS =========================
 
-DATABASE_URL = f"postgresql+psycopg2://{os.getenv('DB_USER')}:{os.getenv('DB_PASS')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}?client_encoding=utf8"
 tabela =os.getenv('NOME_TABELA')
 
-# ========================= FUNÇÃO DE CARREGAMENTO DE DADOS E GEOJSON =========================
-
-@st.cache_data(show_spinner=False)
-def carregar_geojson_local(filename):
-    """ Carrega dados GeoJSON de um arquivo local. """
-    try:
-        script_dir = os.path.dirname(__file__) if "__file__" in locals() else os.getcwd()
-        filepath = os.path.join(script_dir, filename)
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        st.error(f"Arquivo GeoJSON '{filename}' não encontrado na pasta do script ({script_dir}). Faça o download e salve-o lá.")
-
-        try:
-             with open(filename, 'r', encoding='utf-8') as f:
-                  st.info(f"Carregado GeoJSON de: {os.path.abspath(filename)}")
-                  return json.load(f)
-        except Exception:
-             return None
-    except json.JSONDecodeError as e:
-        st.error(f"Erro ao decodificar GeoJSON local '{filename}': {e}")
-        return None
-    except Exception as e:
-        st.error(f"Erro inesperado ao carregar GeoJSON local '{filename}': {e}")
-        return None
-
-@st.cache_data(show_spinner="Carregando dados...")
-def carregar_dados_db(_engine):
-    """
-    Carrega os dados do banco de dados PostgreSQL e o GeoJSON local.
-    """
-    geojson_data = carregar_geojson_local(os.getenv('LOCAL_GEOJSON_FILENAME'))
-    if geojson_data is None:
-        st.warning("Não foi possível carregar os dados geográficos para o mapa.")
-
-    try:
-        with _engine.connect() as connection:
-
-            query_anos = text(f'SELECT DISTINCT "NU_ANO" FROM "{tabela}" ORDER BY "NU_ANO" DESC')
-            query_faixa = text(f'SELECT DISTINCT "TP_FAIXA_ETARIA" FROM "{tabela}" ORDER BY "TP_FAIXA_ETARIA"')
-            query_conclusao = text(f'SELECT DISTINCT "TP_ST_CONCLUSAO" FROM "{tabela}" ORDER BY "TP_ST_CONCLUSAO"')
-
-            anos_disponiveis = [str(a[0]) for a in connection.execute(query_anos).fetchall() if a[0] is not None]
-            faixas_disponiveis = [f[0] for f in connection.execute(query_faixa).fetchall() if f[0] is not None]
-            conclusoes_disponiveis = [c[0] for c in connection.execute(query_conclusao).fetchall() if c[0] is not None]
-
-            colunas_necessarias = [
-                "NU_INSCRICAO", "NU_ANO", "TP_FAIXA_ETARIA", "TP_SEXO", "TP_ST_CONCLUSAO",
-                "SG_UF_PROVA", "NO_MUNICIPIO_PROVA", 
-                "TP_LINGUA", "NU_NOTA_CN", "NU_NOTA_CH", "NU_NOTA_LC",
-                "NU_NOTA_MT", "NU_NOTA_REDACAO", "MEDIA_GERAL", "INDICADOR_ABSENTEISMO"
-            ]
-            colunas_necessarias = sorted(list(set(colunas_necessarias)))
-            colunas_query = ", ".join([f'"{col}"' for col in colunas_necessarias])
-            query_total = text(f'SELECT {colunas_query} FROM "{tabela}"')
-
-            df = pd.read_sql(query_total, connection)
-
-            if 'NU_ANO' in df.columns:
-                df['NU_ANO'] = pd.to_numeric(df['NU_ANO'], errors='coerce').astype('Int64')
-            if 'TP_SEXO' in df.columns:
-                df['TP_SEXO'] = df['TP_SEXO'].astype(str)
-            if 'TP_FAIXA_ETARIA' in df.columns:
-                df['TP_FAIXA_ETARIA'] = pd.to_numeric(df['TP_FAIXA_ETARIA'], errors='coerce').astype('Int64')
-            if 'TP_ST_CONCLUSAO' in df.columns:
-                df['TP_ST_CONCLUSAO'] = pd.to_numeric(df['TP_ST_CONCLUSAO'], errors='coerce').astype('Int64')
-            if 'TP_LINGUA' in df.columns:
-                 df['TP_LINGUA'] = pd.to_numeric(df['TP_LINGUA'], errors='coerce').astype('Int64')
-            for col_nota in ['NU_NOTA_CN', 'NU_NOTA_CH', 'NU_NOTA_LC', 'NU_NOTA_MT', 'NU_NOTA_REDACAO', 'MEDIA_GERAL']:
-                 if col_nota in df.columns:
-                       df[col_nota] = pd.to_numeric(df[col_nota], errors='coerce')
-
-            if 'NO_MUNICIPIO_PROVA' in df.columns:
-                df['NO_MUNICIPIO_PROVA'] = df['NO_MUNICIPIO_PROVA'].astype(str).str.strip()
-
-            return df, anos_disponiveis, faixas_disponiveis, conclusoes_disponiveis, geojson_data
-
-    except Exception as e:
-        st.error(f"Erro ao conectar ou carregar dados do PostgreSQL: {e}")
-
-        return pd.DataFrame(), [], [], [], geojson_data
 
 
-@st.cache_data(show_spinner="Buscando municípios...")
-def buscar_municipios_por_estado(estado_sigla, _engine):
-    """ Busca a lista de municípios para um dado estado no banco de dados. """
-    if not estado_sigla or estado_sigla == "Todos":
-        return []
+from db.queries import carregar_dados_db, buscar_municipios_por_estado
 
-    try:
-        with _engine.connect() as connection:
-            query = text(f'''
-                SELECT DISTINCT "NO_MUNICIPIO_PROVA"
-                FROM "{tabela}"
-                WHERE "SG_UF_PROVA" = :estado
-                ORDER BY "NO_MUNICIPIO_PROVA" ASC
-            ''')
-            result = connection.execute(query, {"estado": estado_sigla})
-            municipios = [row[0] for row in result.fetchall() if row[0]]
-            return sorted(list(set(municipios)))
-    except Exception as e:
-        st.error(f"Erro ao buscar municípios para {estado_sigla}: {e}")
-        return []
 
 # --- Conectar ao Banco ---
-try:
-    engine = create_engine(DATABASE_URL)
-    # Teste de conexão
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
-except Exception as e:
-    st.error(f"Falha ao criar 'engine' ou conectar ao SQLAlchemy: {e}")
-    st.info("Verifique a string de conexão, usuário, senha, host, porta e se o serviço PostgreSQL está ativo.")
-    st.stop()
-
+engine = get_engine()
+   
 # --- Carregar Dados e GeoJSON ---
 df_principal, anos_disponiveis_db, faixas_disponiveis_num_db, conclusoes_disponiveis_num_db, geojson_brasil = carregar_dados_db(engine)
 
