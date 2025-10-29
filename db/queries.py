@@ -7,9 +7,6 @@ from utils.json_utils import carregar_geojson_local
 
 @st.cache_data(show_spinner="Carregando dados...")
 def carregar_dados_db(_engine):
-    """
-    Carrega os dados do banco de dados PostgreSQL e o GeoJSON local.
-    """
     geojson_data = carregar_geojson_local(os.getenv('LOCAL_GEOJSON_FILENAME'))
     if geojson_data is None:
         st.warning("Não foi possível carregar os dados geográficos para o mapa.")
@@ -30,11 +27,20 @@ def carregar_dados_db(_engine):
                 "NU_INSCRICAO", "NU_ANO", "TP_FAIXA_ETARIA", "TP_SEXO", "TP_ST_CONCLUSAO",
                 "SG_UF_PROVA", "NO_MUNICIPIO_PROVA", 
                 "TP_LINGUA", "NU_NOTA_CN", "NU_NOTA_CH", "NU_NOTA_LC",
-                "NU_NOTA_MT", "NU_NOTA_REDACAO", "MEDIA_GERAL", "INDICADOR_ABSENTEISMO"
+                "NU_NOTA_MT", "NU_NOTA_REDACAO", "MEDIA_GERAL", "INDICADOR_ABSENTEISMO",
+                "TP_COR_RACA", "IN_TREINEIRO"
             ]
+            
             colunas_necessarias = sorted(list(set(colunas_necessarias)))
             colunas_query = ", ".join([f'"{col}"' for col in colunas_necessarias])
-            query_total = text(f'SELECT {colunas_query} FROM "{tabela}"')
+
+            colunas_socioeconomicas = f'''
+                , "Q006" AS "Q_RENDA"
+                , "Q001" AS "Q_ESCOLARIDADE_PAI"
+                , "Q002" AS "Q_ESCOLARIDADE_MAE"
+            '''
+            
+            query_total = text(f'SELECT {colunas_query} {colunas_socioeconomicas} FROM "{tabela}"')
 
             df = pd.read_sql(query_total, connection)
 
@@ -48,6 +54,18 @@ def carregar_dados_db(_engine):
                 df['TP_ST_CONCLUSAO'] = pd.to_numeric(df['TP_ST_CONCLUSAO'], errors='coerce').astype('Int64')
             if 'TP_LINGUA' in df.columns:
                  df['TP_LINGUA'] = pd.to_numeric(df['TP_LINGUA'], errors='coerce').astype('Int64')
+            if 'TP_COR_RACA' in df.columns:
+                 df['TP_COR_RACA'] = pd.to_numeric(df['TP_COR_RACA'], errors='coerce').astype('Int64')
+            if 'IN_TREINEIRO' in df.columns:
+                 df['IN_TREINEIRO'] = pd.to_numeric(df['IN_TREINEIRO'], errors='coerce').astype('Int64')
+            
+            if 'Q_RENDA' in df.columns:
+                 df['Q_RENDA'] = df['Q_RENDA'].astype(str)
+            if 'Q_ESCOLARIDADE_PAI' in df.columns:
+                 df['Q_ESCOLARIDADE_PAI'] = df['Q_ESCOLARIDADE_PAI'].astype(str)
+            if 'Q_ESCOLARIDADE_MAE' in df.columns:
+                 df['Q_ESCOLARIDADE_MAE'] = df['Q_ESCOLARIDADE_MAE'].astype(str)
+
             for col_nota in ['NU_NOTA_CN', 'NU_NOTA_CH', 'NU_NOTA_LC', 'NU_NOTA_MT', 'NU_NOTA_REDACAO', 'MEDIA_GERAL']:
                  if col_nota in df.columns:
                        df[col_nota] = pd.to_numeric(df[col_nota], errors='coerce')
@@ -65,7 +83,6 @@ def carregar_dados_db(_engine):
 
 @st.cache_data(show_spinner="Buscando municípios...")
 def buscar_municipios_por_estado(estado_sigla, _engine):
-    """ Busca a lista de municípios para um dado estado no banco de dados. """
     if not estado_sigla or estado_sigla == "Todos":
         return []
 
