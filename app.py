@@ -11,23 +11,20 @@ import os
 import numpy as np 
 
 from db.connection import get_engine
+from db.queries import carregar_dados_db, buscar_municipios_por_estado
 
+# --- Configuração da Página ---
 st.set_page_config(page_title="Dashboard ENEM", layout="wide")
 
-
+# --- Carregar CSS ---
 with open("styles.css") as f:
     css = f.read()
 st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
+# --- Variáveis de Ambiente ---
+tabela = os.getenv('NOME_TABELA')
 
-
-tabela =os.getenv('NOME_TABELA')
-
-
-
-from db.queries import carregar_dados_db, buscar_municipios_por_estado
-
-
+# --- Conexão e Carga de Dados ---
 engine = get_engine()
     
 df_principal, anos_disponiveis_db, faixas_disponiveis_num_db, conclusoes_disponiveis_num_db, geojson_brasil = carregar_dados_db(engine)
@@ -36,7 +33,7 @@ if df_principal.empty:
     st.error("Nenhum dado foi carregado do banco de dados. Verifique o SCRIPT.py e a conexão.")
     st.stop()
 
-
+# --- Mapeamentos e Opções ---
 try:
     anos_options_fim = sorted(anos_disponiveis_db, key=int, reverse=True)
     anos_options_inicio = sorted(anos_disponiveis_db, key=int, reverse=False)
@@ -57,42 +54,17 @@ try:
     }
 
     map_raca = {
-        0: 'Não declarado',
-        1: 'Branca',
-        2: 'Preta',
-        3: 'Parda',
-        4: 'Amarela',
-        5: 'Indígena'
+        0: 'Não declarado', 1: 'Branca', 2: 'Preta', 3: 'Parda', 4: 'Amarela', 5: 'Indígena'
     }
 
     map_treineiro = {
-        0: 'Não (Oficial)',
-        1: 'Sim (Treineiro)'
-    }
-
-    map_renda_full = {
-        'A': 'Nenhuma renda', 'B': 'Até 1 SM', 'C': 'De 1 a 1.5 SM', 'D': 'De 1.5 a 2 SM',
-        'E': 'De 2 a 2.5 SM', 'F': 'De 2.5 a 3 SM', 'G': 'De 3 a 4 SM', 'H': 'De 4 a 5 SM',
-        'I': 'De 5 a 6 SM', 'J': 'De 6 a 7 SM', 'K': 'De 7 a 8 SM', 'L': 'De 8 a 9 SM',
-        'M': 'De 9 a 10 SM', 'N': 'De 10 a 12 SM', 'O': 'De 12 a 15 SM', 'P': 'De 15 a 20 SM',
-        'Q': 'Acima de 20 SM'
+        0: 'Não (Oficial)', 1: 'Sim (Treineiro)'
     }
 
     map_renda_numerico = {
         'A': 0.0, 'B': 1.0, 'C': 1.25, 'D': 1.75, 'E': 2.25, 'F': 2.75,
         'G': 3.5, 'H': 4.5, 'I': 5.5, 'J': 6.5, 'K': 7.5, 'L': 8.5,
         'M': 9.5, 'N': 11.0, 'O': 13.5, 'P': 17.5, 'Q': 20.0 
-    }
-
-    map_escolaridade_pais_full = {
-        'A': 'Nunca estudou',
-        'B': 'Não completou a 4ª série',
-        'C': 'Completou a 4ª série',
-        'D': 'Completou a 8ª série',
-        'E': 'Completou o Ensino Médio',
-        'F': 'Completou a Graduação',
-        'G': 'Completou a Pós-Graduação',
-        'H': 'Não sabe'
     }
 
     faixas_options = ["Todos"] + [map_faixa_etaria.get(f, f"Código {f}") for f in sorted([int(x) for x in faixas_disponiveis_num_db if pd.notna(x)])]
@@ -103,7 +75,10 @@ except Exception as e:
     anos_options_fim = []
     faixas_options = ["Todos"]
     conclusoes_options = ["Todos"]
+    map_faixa_etaria = {}
+    map_conclusao = {}
 
+# --- Inicialização do Session State (Sidebar) ---
 ano_inicio_default_idx = 0 if anos_options_inicio else 0
 ano_fim_default_idx = 0 if anos_options_fim else 0
 
@@ -124,6 +99,36 @@ if 'sel_escolaridade' not in st.session_state:
 if 'opcoes_municipio' not in st.session_state:
     st.session_state.opcoes_municipio = ["Todos"]
 
+# --- Inicialização do Session State (Comparativo de Grupos) ---
+if 'g1_ano' not in st.session_state: st.session_state.g1_ano = anos_options_fim[0] if anos_options_fim else None
+if 'g1_estado' not in st.session_state: st.session_state.g1_estado = "Todos"
+if 'g1_faixa' not in st.session_state: st.session_state.g1_faixa = "Todos"
+if 'g1_conclusao' not in st.session_state: st.session_state.g1_conclusao = "Todos"
+
+if 'g2_ano' not in st.session_state: st.session_state.g2_ano = anos_options_fim[0] if anos_options_fim else None
+if 'g2_estado' not in st.session_state: st.session_state.g2_estado = "Todos"
+if 'g2_faixa' not in st.session_state: st.session_state.g2_faixa = "Todos"
+if 'g2_conclusao' not in st.session_state: st.session_state.g2_conclusao = "Todos"
+
+
+# --- LÓGICA DE INTERATIVIDADE (ANTES DA SIDEBAR) ---
+# Verifica se houve clique nos gráficos e atualiza o estado ANTES dos widgets serem criados
+# Isso evita o erro "StreamlitAPIException: ... cannot be modified after the widget ... is instantiated"
+
+# 1. Interatividade Gênero
+if "chart_genero" in st.session_state and st.session_state.chart_genero.get("selection", {}).get("points"):
+    ponto = st.session_state.chart_genero["selection"]["points"][0]
+    novo_genero = ponto.get("label") or ponto.get("x")
+    if novo_genero and st.session_state.get("sel_genero") != novo_genero:
+        st.session_state.sel_genero = novo_genero
+
+# 2. Interatividade Escolaridade
+if "chart_conclusao" in st.session_state and st.session_state.chart_conclusao.get("selection", {}).get("points"):
+    ponto = st.session_state.chart_conclusao["selection"]["points"][0]
+    novo_status = ponto.get("x")
+    if novo_status and st.session_state.get("sel_escolaridade") != novo_status:
+        st.session_state.sel_escolaridade = novo_status
+
 
 def atualizar_lista_municipios():
     estado_atual = st.session_state.get('sel_estado', "Todos")
@@ -132,6 +137,14 @@ def atualizar_lista_municipios():
     if 'sel_municipio' in st.session_state:
         st.session_state.sel_municipio = "Todos"
 
+def copiar_filtros_g1_para_g2():
+    """Copia os valores selecionados no Grupo 1 para o Grupo 2"""
+    st.session_state.g2_ano = st.session_state.g1_ano
+    st.session_state.g2_estado = st.session_state.g1_estado
+    st.session_state.g2_faixa = st.session_state.g1_faixa
+    st.session_state.g2_conclusao = st.session_state.g1_conclusao
+
+# --- Sidebar ---
 with st.sidebar:
     st.markdown("<div class='sidebar-title'>Dashboard</div>", unsafe_allow_html=True)
     st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
@@ -187,10 +200,6 @@ with st.sidebar:
     st.button("Limpar Filtros", on_click=limpar_filtros_callback)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("<div class='sidebar-group'>", unsafe_allow_html=True)
-    st.button("Comparar Grupos") 
-    st.markdown("</div>", unsafe_allow_html=True)
-
     st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
 
     st.markdown("<div class='sidebar-group'>", unsafe_allow_html=True)
@@ -200,6 +209,7 @@ with st.sidebar:
 if st.session_state.sel_estado != "Todos" and st.session_state.opcoes_municipio == ["Todos"]:
      atualizar_lista_municipios()
 
+# --- Funções Auxiliares de Plotagem e Layout ---
 
 def gap(h=10):
     st.markdown(f"<div style='height:{h}px'></div>", unsafe_allow_html=True)
@@ -271,7 +281,6 @@ def criar_donut_genero(df_filtrado):
         return fig
     except Exception as e: return None
 
-map_centers_zoom = {'AC': {'lat': -9.02, 'lon': -70.81, 'zoom': 6}, 'AL': {'lat': -9.57, 'lon': -36.78, 'zoom': 7}, 'AP': {'lat': 1.41, 'lon': -51.77, 'zoom': 6}, 'AM': {'lat': -3.41, 'lon': -65.85, 'zoom': 5}, 'BA': {'lat': -12.96, 'lon': -41.82, 'zoom': 5.5}, 'CE': {'lat': -5.20, 'lon': -39.53, 'zoom': 6.5}, 'DF': {'lat': -15.78, 'lon': -47.92, 'zoom': 8}, 'ES': {'lat': -19.18, 'lon': -40.30, 'zoom': 7}, 'GO': {'lat': -15.82, 'lon': -49.83, 'zoom': 6}, 'MA': {'lat': -5.42, 'lon': -45.44, 'zoom': 5.5}, 'MT': {'lat': -12.64, 'lon': -55.42, 'zoom': 5}, 'MS': {'lat': -20.51, 'lon': -54.52, 'zoom': 6}, 'MG': {'lat': -18.51, 'lon': -44.55, 'zoom': 5.5}, 'PA': {'lat': -3.79, 'lon': -52.48, 'zoom': 5}, 'PB': {'lat': -7.06, 'lon': -36.72, 'zoom': 7}, 'PR': {'lat': -25.25, 'lon': -52.02, 'zoom': 6}, 'PE': {'lat': -8.38, 'lon': -37.86, 'zoom': 6}, 'PI': {'lat': -7.22, 'lon': -42.72, 'zoom': 6}, 'RJ': {'lat': -22.18, 'lon': -42.44, 'zoom': 7}, 'RN': {'lat': -5.81, 'lon': -36.56, 'zoom': 7}, 'RS': {'lat': -30.01, 'lon': -53.53, 'zoom': 6}, 'RO': {'lat': -10.83, 'lon': -63.34, 'zoom': 6}, 'RR': {'lat': 2.73, 'lon': -61.22, 'zoom': 6}, 'SC': {'lat': -27.45, 'lon': -50.21, 'zoom': 6.5}, 'SP': {'lat': -22.19, 'lon': -48.79, 'zoom': 6}, 'SE': {'lat': -10.57, 'lon': -37.38, 'zoom': 7.5}, 'TO': {'lat': -9.46, 'lon': -48.26, 'zoom': 6}}
 BR_CENTER = {"lat": -14.2350, "lon": -51.9253}; BR_ZOOM = 3
 
 def criar_mapa_brasil(df_para_contagem, geojson_data):
@@ -302,22 +311,6 @@ def criar_mapa_brasil(df_para_contagem, geojson_data):
 def placeholder_mapa():
     map_icon_svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6"><path fill-rule="evenodd" d="M8.161 2.58a1.875 1.875 0 0 1 1.678 0l4.993 2.498c.106.052.23.052.336 0l4.993-2.498a1.875 1.875 0 0 1 2.349 1.678V15.36a1.875 1.875 0 0 1-1.678 1.846l-4.993 1.248a1.875 1.875 0 0 1-.336 0l-4.993-1.248a1.875 1.875 0 0 0-1.678 0l-4.993 1.248A1.875 1.875 0 0 1 .75 15.36V4.258c0-.751.43-1.43.912-1.745l4.993-2.498a1.875 1.875 0 0 1 1.506.567zM10.5 6a.75.75 0 0 1 .75.75v6.563l2.25-1.125a.75.75 0 0 1 1.002 1.002l-3.75 3.75a.75.75 0 0 1-1.002 0L6.75 13.19l1.002-1.002a.75.75 0 0 1 1.002 0l1 .5V6.75A.75.75 0 0 1 10.5 6z" clip-rule="evenodd" /><path d="M11.96 18.937a1.875 1.875 0 0 1-1.678 0l-4.993-1.248a1.875 1.875 0 0 1-1.506-.567V19.5c0 .933.743 1.705 1.678 1.846l4.993 1.248c.106.026.23.026.336 0l4.993-1.248A1.875 1.875 0 0 0 18.75 19.5v-2.375a1.875 1.875 0 0 1-1.506.567L11.96 18.937z" /></svg>"""
     return f"""<div class='map-placeholder'>{map_icon_svg}<p>Mapa Interativo do Brasil<br><small>(Falha ao carregar ou sem dados)</small></p></div>"""
-
-def criar_barras_cidades(df_filtrado):
-    if df_filtrado.empty or 'NO_MUNICIPIO_PROVA' not in df_filtrado.columns: return None
-    df_cidades_data = df_filtrado.dropna(subset=['NO_MUNICIPIO_PROVA']); df_cidades_data = df_cidades_data[df_cidades_data['NO_MUNICIPIO_PROVA'].str.strip() != '']
-    if df_cidades_data.empty: return None
-    df_cidades = df_cidades_data.groupby('NO_MUNICIPIO_PROVA').agg(Inscritos=pd.NamedAgg(column='NU_INSCRICAO', aggfunc='count')).reset_index().sort_values(by='Inscritos', ascending=False)
-    df_top_cidades = df_cidades.head(10).sort_values(by='Inscritos', ascending=True)
-    if df_top_cidades.empty: return None
-    estado_nome = st.session_state.get('sel_estado', "Todos") 
-    if estado_nome == "Todos": estado_nome = "Brasil"
-    try:
-        fig = px.bar(df_top_cidades, y='NO_MUNICIPIO_PROVA', x='Inscritos', title=f"Top 10 Cidades em {estado_nome}", color_discrete_sequence=['#f4a261'])
-        fig.update_traces(hovertemplate='<b>%{y}</b><br>Inscritos: %{x}<extra></extra>')
-        fig.update_layout(showlegend=False, margin=dict(t=50, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='var(--text)', size=11), title_font_size=16, title_x=0.05, title_y=0.95, yaxis_title=None, xaxis_title="Total de Inscritos", height=320)
-        return fig
-    except Exception as e: return None
 
 def criar_barras_medias(df_filtrado):
     cols_notas = ['NU_NOTA_CN', 'NU_NOTA_CH', 'NU_NOTA_LC', 'NU_NOTA_MT', 'NU_NOTA_REDACAO']
@@ -476,11 +469,8 @@ def criar_barras_escolaridade_pais(df_filtrado, coluna, titulo):
         return fig
     except Exception as e: return None
 
-def grid_analise_placeholder():
-    g1, g2 = st.columns([1.4, 1], gap="small")
-    with g1: st.markdown("<div class='w-box-placeholder'></div>", unsafe_allow_html=True); gap(12); st.markdown("<div class='w-box-placeholder'></div>", unsafe_allow_html=True)
-    with g2: st.markdown("<div class='w-tall-placeholder'></div>", unsafe_allow_html=True)
 
+# --- Lógica Principal de Filtros do Dashboard Geral ---
 
 df_filtrado = df_principal.copy() 
 
@@ -534,6 +524,7 @@ try:
 except Exception as e: pass
 
 
+# --- Cálculo de KPIs Gerais ---
 total_inscritos = df_filtrado.shape[0] if not df_filtrado.empty else 0
 total_confirmados = 0; total_presentes = 0; total_ausentes_dia = 0
 if 'INDICADOR_ABSENTEISMO' in df_filtrado.columns and not df_filtrado.empty:
@@ -553,6 +544,7 @@ if 'TP_LINGUA' in df_filtrado.columns and not df_filtrado.empty:
 perc_ingles = (cont_ingles / total_lingua) if total_lingua > 0 else 0.0
 perc_espanhol = (cont_espanhol / total_lingua) if total_lingua > 0 else 0.0
 
+# --- Renderização dos KPIs ---
 kpi_cols = st.columns([1, 1, 1.5, 1, 1], gap="small")
 with kpi_cols[0]: st.markdown(criar_kpi("Total Inscritos", total_inscritos), unsafe_allow_html=True)
 with kpi_cols[1]: st.markdown(criar_kpi("Total Confirmados", total_confirmados), unsafe_allow_html=True)
@@ -564,6 +556,7 @@ kpi_lang_cols = st.columns([1, 3], gap="small")
 with kpi_lang_cols[0]: st.markdown(criar_kpi_lingua("Linguagem Estrangeira", cont_ingles, cont_espanhol, perc_ingles, perc_espanhol), unsafe_allow_html=True)
 
 
+# --- Renderização de Gráficos ---
 gap(6); section("Análise Geográfica e Demográfica")
 col1, col2 = st.columns([1.4, 1], gap="small")
 
@@ -580,13 +573,16 @@ fig_mapa = criar_mapa_brasil(df_principal, geojson_brasil)
 with placeholder_esquerda_sup.container():
     st.dataframe(df_tabela, use_container_width=True, hide_index=True, column_config={"Ano": st.column_config.NumberColumn(format="%d", width="small"), "Total Inscritos": st.column_config.NumberColumn(format="%,d"), "Total Confirmados": st.column_config.NumberColumn(format="%,d"), "% Presentes": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "% Ausentes": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1)})
 
+# --- INTERATIVIDADE: GÊNERO ---
 with placeholder_esquerda_inf.container(border=False):
     fig_genero = criar_donut_genero(df_filtrado)
     if fig_genero:
-         st.plotly_chart(fig_genero, use_container_width=True, config={"displayModeBar": False})
+        # Habilita seleção no gráfico, define chave única
+        st.plotly_chart(fig_genero, use_container_width=True, config={"displayModeBar": False}, on_select="rerun", selection_mode="points", key="chart_genero")
     else:
          st.markdown('<div class="chart-placeholder-box small">Dados de Gênero indisponíveis.</div>', unsafe_allow_html=True)
 
+# --- MAPA (SEM INTERATIVIDADE DE CLIQUE PARA EVITAR ERRO) ---
 with placeholder_direita.container(border=False):
     if fig_mapa:
         st.plotly_chart(fig_mapa, use_container_width=True, config={"displayModeBar": False}) 
@@ -616,11 +612,16 @@ fig_conclusao = criar_barras_conclusao(df_filtrado)
 fig_raca = criar_donut_raca(df_filtrado)
 fig_treineiro = criar_donut_treineiro(df_filtrado)
 fig_faixa_agrupada = criar_barras_faixa_etaria_agrupada(df_filtrado)
+
 perfil_col1, perfil_col2 = st.columns([1, 1], gap="small")
 with perfil_col1:
+    # --- INTERATIVIDADE: ESCOLARIDADE ---
     with st.empty().container(border=False):
-        if fig_conclusao: st.plotly_chart(fig_conclusao, use_container_width=True, config={"displayModeBar": False})
-        else: st.markdown('<div class="chart-placeholder-box small">Dados de Escolaridade indisponíveis.</div>', unsafe_allow_html=True)
+        if fig_conclusao: 
+            st.plotly_chart(fig_conclusao, use_container_width=True, config={"displayModeBar": False}, on_select="rerun", selection_mode="points", key="chart_conclusao")
+        else: 
+            st.markdown('<div class="chart-placeholder-box small">Dados de Escolaridade indisponíveis.</div>', unsafe_allow_html=True)
+    
     gap(12)
     with st.empty().container(border=False):
         if fig_treineiro: st.plotly_chart(fig_treineiro, use_container_width=True, config={"displayModeBar": False})
@@ -657,9 +658,163 @@ with socio_col2:
         if fig_barras_mae: st.plotly_chart(fig_barras_mae, use_container_width=True, config={"displayModeBar": False})
         else: st.markdown('<div class="chart-placeholder-box small">Dados de Escolaridade Materna indisponíveis.</div>', unsafe_allow_html=True)
 
-gap(18); section("Comparativo de Grupos")
-grid_analise_placeholder()
 
+# --- COMPARATIVO DE GRUPOS ---
+
+gap(18); section("Comparativo de Grupos")
+
+def filtrar_grupo(df, ano, estado, faixa, conclusao):
+    """Aplica filtros ao dataframe e retorna o subconjunto."""
+    df_temp = df.copy()
+    
+    # Filtro Ano
+    if ano:
+        df_temp = df_temp[df_temp['NU_ANO'] == int(ano)]
+        
+    # Filtro Estado
+    if estado != "Todos":
+        df_temp = df_temp[df_temp['SG_UF_PROVA'] == estado]
+        
+    # Filtro Faixa Etária
+    if faixa != "Todos":
+        map_faixa_reverso = {v: k for k, v in map_faixa_etaria.items()}
+        cod = map_faixa_reverso.get(faixa)
+        if cod:
+            df_temp = df_temp[df_temp['TP_FAIXA_ETARIA'] == cod]
+            
+    # Filtro Conclusão (Escolaridade)
+    if conclusao != "Todos":
+        map_conclusao_reverso = {v: k for k, v in map_conclusao.items()}
+        cod = map_conclusao_reverso.get(conclusao)
+        if cod:
+            df_temp = df_temp[df_temp['TP_ST_CONCLUSAO'] == cod]
+            
+    return df_temp
+
+def calcular_kpis_grupo(df_grupo):
+    """Calcula métricas para o card do grupo."""
+    if df_grupo.empty:
+        return 0, 0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0.0, 0.0
+        
+    total = len(df_grupo)
+    
+    # Confirmados vs Ausentes
+    if 'INDICADOR_ABSENTEISMO' in df_grupo.columns:
+        confirmados = (df_grupo['INDICADOR_ABSENTEISMO'] != 'Ausente em um ou mais dias').sum()
+        presentes = (df_grupo['INDICADOR_ABSENTEISMO'] == 'Presente').sum()
+        ausentes = (df_grupo['INDICADOR_ABSENTEISMO'] == 'Ausente em um ou mais dias').sum()
+    else:
+        confirmados = 0; presentes = 0; ausentes = 0
+
+    perc_pres = presentes / total if total > 0 else 0.0
+    perc_aus = ausentes / total if total > 0 else 0.0
+    
+    # Médias (Tratamento para NaN)
+    media_geral = df_grupo['MEDIA_GERAL'].mean() if 'MEDIA_GERAL' in df_grupo.columns else 0.0
+    if pd.isna(media_geral): media_geral = 0.0
+
+    media_redacao = df_grupo['NU_NOTA_REDACAO'].mean() if 'NU_NOTA_REDACAO' in df_grupo.columns else 0.0
+    if pd.isna(media_redacao): media_redacao = 0.0
+
+    # Linguagem
+    cont_ingles = 0; cont_espanhol = 0
+    if 'TP_LINGUA' in df_grupo.columns:
+        cont_ingles = (df_grupo['TP_LINGUA'] == 0).sum()
+        cont_espanhol = (df_grupo['TP_LINGUA'] == 1).sum()
+
+    total_lingua = cont_ingles + cont_espanhol
+    perc_ing = cont_ingles / total_lingua if total_lingua > 0 else 0.0
+    perc_esp = cont_espanhol / total_lingua if total_lingua > 0 else 0.0
+        
+    return total, confirmados, perc_pres, perc_aus, media_geral, media_redacao, cont_ingles, cont_espanhol, perc_ing, perc_esp
+
+col_g1, col_sep, col_g2 = st.columns([1, 0.1, 1])
+
+# === GRUPO 1 ===
+with col_g1:
+    st.markdown("### GRUPO 1")
+    
+    with st.container(border=True):
+        st.markdown("**Definição do Grupo 1**")
+        # Layout em Grid (2 colunas) para os filtros
+        c1, c2 = st.columns(2)
+        with c1:
+            st.selectbox("Ano", options=anos_options_fim, key='g1_ano')
+            st.selectbox("Faixa Etária", options=faixas_options, key='g1_faixa')
+        with c2:
+            st.selectbox("Estado", options=estados_brasileiros, key='g1_estado')
+            st.selectbox("Status Conclusão", options=conclusoes_options, key='g1_conclusao')
+
+    # Processamento
+    df_g1 = filtrar_grupo(df_principal, st.session_state.g1_ano, st.session_state.g1_estado, st.session_state.g1_faixa, st.session_state.g1_conclusao)
+    total_g1, conf_g1, perc_pres_g1, perc_aus_g1, med_geral_g1, med_red_g1, val_ing_g1, val_esp_g1, perc_ing_g1, perc_esp_g1 = calcular_kpis_grupo(df_g1)
+
+    gap(10)
+    # Grid de KPIs
+    r1_c1, r1_c2 = st.columns(2)
+    with r1_c1: st.markdown(criar_kpi("Total Inscritos", total_g1), unsafe_allow_html=True)
+    with r1_c2: st.markdown(criar_kpi("Total Confirmados", conf_g1), unsafe_allow_html=True)
+
+    gap(10)
+    r2_c1, r2_c2 = st.columns(2)
+    with r2_c1: st.markdown(criar_kpi("Média Geral", med_geral_g1, formato="{:,.2f}"), unsafe_allow_html=True)
+    with r2_c2: st.markdown(criar_kpi("Média Redação", med_red_g1, formato="{:,.2f}"), unsafe_allow_html=True)
+    
+    gap(10)
+    st.markdown(criar_kpi_presenca("% Presentes x Ausentes", perc_pres_g1, perc_aus_g1), unsafe_allow_html=True)
+    
+    gap(10)
+    st.markdown(criar_kpi_lingua("Linguagem Estrangeira", val_ing_g1, val_esp_g1, perc_ing_g1, perc_esp_g1), unsafe_allow_html=True)
+
+
+# === SEPARADOR ===
+with col_sep:
+    st.write("") 
+
+
+# === GRUPO 2 ===
+with col_g2:
+    # Cabeçalho com título e botão alinhados
+    c_title, c_btn = st.columns([1, 1])
+    with c_title:
+        st.markdown("### GRUPO 2")
+    with c_btn:
+        st.button("Copiar Filtros do Grupo 1", on_click=copiar_filtros_g1_para_g2, use_container_width=True)
+
+    with st.container(border=True):
+        st.markdown("**Definição do Grupo 2**")
+        # Layout em Grid (2 colunas) para os filtros
+        c1_g2, c2_g2 = st.columns(2)
+        with c1_g2:
+            st.selectbox("Ano", options=anos_options_fim, key='g2_ano')
+            st.selectbox("Faixa Etária", options=faixas_options, key='g2_faixa')
+        with c2_g2:
+            st.selectbox("Estado", options=estados_brasileiros, key='g2_estado')
+            st.selectbox("Status Conclusão", options=conclusoes_options, key='g2_conclusao')
+
+    # Processamento
+    df_g2 = filtrar_grupo(df_principal, st.session_state.g2_ano, st.session_state.g2_estado, st.session_state.g2_faixa, st.session_state.g2_conclusao)
+    total_g2, conf_g2, perc_pres_g2, perc_aus_g2, med_geral_g2, med_red_g2, val_ing_g2, val_esp_g2, perc_ing_g2, perc_esp_g2 = calcular_kpis_grupo(df_g2)
+
+    gap(10)
+    # Grid de KPIs
+    r1_c1_g2, r1_c2_g2 = st.columns(2)
+    with r1_c1_g2: st.markdown(criar_kpi("Total Inscritos", total_g2), unsafe_allow_html=True)
+    with r1_c2_g2: st.markdown(criar_kpi("Total Confirmados", conf_g2), unsafe_allow_html=True)
+
+    gap(10)
+    r2_c1_g2, r2_c2_g2 = st.columns(2)
+    with r2_c1_g2: st.markdown(criar_kpi("Média Geral", med_geral_g2, formato="{:,.2f}"), unsafe_allow_html=True)
+    with r2_c2_g2: st.markdown(criar_kpi("Média Redação", med_red_g2, formato="{:,.2f}"), unsafe_allow_html=True)
+
+    gap(10)
+    st.markdown(criar_kpi_presenca("% Presentes x Ausentes", perc_pres_g2, perc_aus_g2), unsafe_allow_html=True)
+
+    gap(10)
+    st.markdown(criar_kpi_lingua("Linguagem Estrangeira", val_ing_g2, val_esp_g2, perc_ing_g2, perc_esp_g2), unsafe_allow_html=True)
+
+
+# --- PDF Generation ---
 if gerar_pdf:
     st_html("""
     <script>
